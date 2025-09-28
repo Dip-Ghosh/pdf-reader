@@ -3,7 +3,6 @@
 namespace App\Traits;
 
 use App\GeonamesCountry;
-use Carbon\Carbon;
 use Illuminate\Support\Str;
 
 trait PdfParsing
@@ -70,32 +69,18 @@ trait PdfParsing
     {
         return $name ?? 'unknown';
    }
+
     protected function getCompanyName(string $line = null): ?string
     {
         return   $line ?? null;
    }
+
     protected function getStreetAddress(array $lines = null): ?string
     {
         return implode(', ', array_slice($lines, 1, 3)) ?? null;
-
    }
 
-//    protected function extractCustomer(array $lines): array
-//    {
-//        return [
-//            'side'    => 'Sender',
-//            'details' => [
-//
-//             ,
-//                'postal_code'    => $lines[6],
-//                'country'        => $this->extractCountry($lines),
-//                'telephone'      => $lines[7] ?? null,
-//                'Contact'        => $lines[7] ?? null,
-//            ],
-//        ];
-//    }
-
-    private function extractCountry($lines)
+    protected function extractCountry($lines)
     {
         if (preg_match('/\b([A-Z]{2,3})\b/', $lines[0], $m)) {
             $country = $m[1];
@@ -106,110 +91,79 @@ trait PdfParsing
 
     protected function extractComment(array $lines): ?string
     {
-        $obsIndex = array_find_key($lines, fn($l) => Str::contains(strtoupper($l), 'OBSERVATIONS'));
-
-
-        if ($obsIndex !== null) {
+        if (($obsIndex = array_find_key($lines, fn($l) => Str::contains(strtoupper($l), 'OBSERVATIONS'))) !== null) {
             $customsIndex = array_find_key($lines, fn($l) => Str::contains(strtoupper($l), 'CUSTOMS INSTRUCTIONS'));
-            $slice        = array_slice($lines, $obsIndex, ($customsIndex ?? count($lines)) - $obsIndex);
-            $cleaned      = collect($slice)
+            return collect(array_slice($lines, $obsIndex, ($customsIndex ?? count($lines)) - $obsIndex))
                 ->map(fn($l) => Str::squish(str_replace('Observations :', '', $l)))
                 ->filter()
-                ->implode(' ')
-            ;
-            return $cleaned ?: null;
+                ->implode(' ') ?: null;
         }
 
-        //For Booking PDF
-        $commentLines = collect($lines)
+        return collect($lines)
             ->filter(fn($l) => Str::startsWith(trim($l), '-'))
             ->map(fn($l) => Str::squish(ltrim($l, '-')))
-            ->implode(' ')
-        ;
-
-        if (empty($commentLines)) {
-            return null;
-        }
-
-        return $commentLines;
+            ->implode(' ') ?: null;
     }
 
-//    protected function extractCargos(array $lines): array
-//    {
-//        $titleLine  = collect($lines)->first(fn($l) => Str::contains(strtoupper($l),
-//                                                                     ['ROLLS', 'PALLET', 'PACKAGE', 'CARGO']));
-//        $weightLine = collect($lines)->first(fn($l) => preg_match('/\d{3,}\.?(\d+)?/', $l) && Str::contains($l, 'Kgs'));
-//        $weight     = $weightLine ? (float) preg_replace('/[^0-9.]/', '', $weightLine) : null;
-//
-//        return [
-//            [
-//                'title'         => $titleLine ?? 'Cargo',
-//                'package_count' => 1,
-//                'package_type'  => 'pallet',
-//                'number'        => $this->extractOrderReference($lines),
-//                'type'          => 'FTL',
-//                'weight'        => $weight,
-//            ],
-//        ];
-//    }
+    protected function extractPrice(array $lines): ?float
+    {
+        $checks = [
+            'SHIPPING PRICE' => [1, [',', ' '], ['.', '']],
+            'Rate'           => [1, ['€', ',', ' '], ['', '', '']],
+        ];
 
-//    private function extractFreightPrice(array $lines): ?float
-//    {
-//        $line = collect($lines)->first(fn($l) => preg_match('/\d+,\d+/', $l));
-//        return $line ? (float) str_replace(',', '.', preg_replace('/[^0-9,]/', '', $line)) : null;
-//    }
-//
-//    private function detectCurrency(array $lines): string
-//    {
-//        $line = collect($lines)->first(fn($l) => Str::contains(strtoupper($l), ['EUR', 'USD', 'GBP', 'PLN', 'ZAR']));
-//        if ($line) {
-//            foreach (['EUR', 'USD', 'GBP', 'PLN', 'ZAR'] as $c) {
-//                if (Str::contains($line, $c)) {
-//                    return $c;
-//                }
-//            }
-//        }
-//        return 'EUR';
-//    }
+        foreach ($checks as $label => [$offset, $search, $replace]) {
+            if (($i = array_search($label, $lines)) !== false) {
+                $priceLine = $lines[$i + $offset] ?? '';
+                if ($priceLine !== '') {
+                    return (float) str_replace($search, $replace, $priceLine);
+                }
+            }
+        }
 
-//    private function extractLocations(array $lines, string $section): array
-//    {
-//        $results      = [];
-//        $sectionIndex = array_find_key($lines, fn($l) => Str::contains(strtoupper($l), strtoupper($section)));
-//        if (!$sectionIndex) {
-//            return [];
-//        }
-//
-//        // Grab ~20 lines after "Loading" or "Delivery"
-//        $slice = array_slice($lines, $sectionIndex, 20);
-//
-//        // Date
-//        $dateLine = collect($slice)->first(fn($l) => preg_match('/\d{2}\/\d{2}\/\d{2}/', $l));
-//        $date     = $dateLine ? $this->parseDate($dateLine) : null;
-//
-//        // Address (grab block of uppercase + postal code)
-//        $address     = collect($slice)->filter(fn($l) => !empty(trim($l)) && strlen($l) > 3)->values();
-//        $company     = $address[2] ?? null;
-//        $street      = $address[3] ?? null;
-//        $postalBlock = collect($address)->first(fn($l) => preg_match('/[A-Z]{2}-?\d{2,}/', $l));
-//        $postalCode  = $postalBlock ? preg_replace('/[^0-9]/', '', $postalBlock) : null;
-//        $country     = $postalBlock ? substr($postalBlock, 0, 2) : null;
-//        $city        = $postalBlock ? trim(Str::after($postalBlock, $country.'-')) : null;
-//
-//        $results[] = [
-//            'company_address' => [
-//                'company'        => $company,
-//                'street_address' => $street,
-//                'city'           => $city,
-//                'country'        => $country,
-//                'postal_code'    => $postalCode,
-//            ],
-//            'time'            => [
-//                'datetime_from' => $date ? $date->startOfDay()->toIso8601String() : null,
-//                'datetime_to'   => $date ? $date->endOfDay()->toIso8601String() : null,
-//            ],
-//        ];
-//
-//        return $results;
-//    }
+        return null;
+    }
+
+    protected function findRefNearby(array $lines, int $idx): ?string
+    {
+        for ($j = $idx; $j < $idx + 8; $j++) {
+            if (isset($lines[$j]) && Str::contains(Str::upper($lines[$j]), 'REF')) {
+                if (preg_match('/REF[\s:]*([A-Z0-9\-]+)/i', $lines[$j], $m)) {
+                    return $m[1];
+                }
+            }
+        }
+        return null;
+    }
+
+    protected function extractTimes(?string $line): array
+    {
+        if (!$line) {
+            return [null, null];
+        }
+        preg_match_all('/(\d{1,2}:\d{2})/', $line, $matches);
+        return $matches[1] ?? [null, null];
+    }
+
+    protected function findTimeLine(array $lines, int $idx, int $lookahead = 6): ?string
+    {
+        for ($i = 1; $i <= $lookahead; $i++) {
+            $line = $lines[$idx + $i] ?? null;
+            if ($line && preg_match('/\d{1,2}[:.]?\d{2}/i', $line)) {
+                return $line;
+            }
+        }
+        return null;
+    }
+
+    protected function findDateLine(array $lines, int $idx, int $lookahead = 6): ?string
+    {
+        for ($i = 1; $i <= $lookahead; $i++) {
+            $line = $lines[$idx + $i] ?? null;
+            if ($line && preg_match('/\d{2}\/\d{2}\/\d{2,4}/', $line)) {
+                return $line;
+            }
+        }
+        return null;
+    }
 }

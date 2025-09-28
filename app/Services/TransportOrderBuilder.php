@@ -65,7 +65,6 @@ class TransportOrderBuilder
         return $this;
     }
 
-
     public function build(): array
     {
         return $this->dto->toArray();

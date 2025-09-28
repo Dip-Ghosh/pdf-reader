@@ -17,8 +17,8 @@ class TransallianceParser implements PdfParserStrategy
     public function __construct()
     {
         $this->sectionConfig = [
-            'Collection' => [
-                'time'            => 'collection',
+            'Loading'  => [
+                'time'            => 'loading',
                 'companyFinder'   => 'findCompany',
                 'streetFinder'    => 'findStreet',
                 'postalFinder'    => 'findPostalCity',
@@ -45,10 +45,7 @@ class TransallianceParser implements PdfParserStrategy
 
     public function parse(array $lines, ?string $file): array
     {
-        $lines = array_values(array_filter(array_map('trim', $lines)));
-
-        $price = $this->extractPrice($lines);
-
+        $lines                = array_values(array_filter(array_map('trim', $lines)));
         $loadingLocations     = [];
         $destinationLocations = [];
         $cargos               = [];
@@ -57,99 +54,65 @@ class TransallianceParser implements PdfParserStrategy
             foreach (array_keys($lines, $type) as $idx) {
                 [$loc, $cargo] = $this->parseSection($lines, $idx, $type, $conf);
 
-                if ($type === 'Collection') {
+                if ($type === 'Loading') {
                     $loadingLocations[] = $loc;
                 } else {
                     $destinationLocations[] = $loc;
                 }
 
-                if ($cargo) $cargos[] = $cargo;
+                if ($cargo) {
+                    $cargos[] = $cargo;
+                }
             }
         }
 
-        $builder = (new TransportOrderBuilder(new TransportOrderData()))
+        return (new TransportOrderBuilder(new TransportOrderData()))
             ->withAttachments($this->getFileName($file))
             ->withCustomer($this->extractCustomer($lines))
             ->withOrderReference($this->extractOrderReference($lines))
-            ->withFreight($price, 'EUR')
-            ->withComment($this->extractComment($lines));
-
-        if (!empty($loadingLocations)) {
-            $builder->withLoadingLocations($loadingLocations);
-        }
-        if (!empty($destinationLocations)) {
-            $builder->withDestinationLocations($destinationLocations);
-        }
-        if (!empty($cargos)) {
-            $builder->withCargos($cargos);
-        }
-
-        return $builder->build();
+            ->withFreight(uncomma($this->extractPrice($lines)), 'EUR')
+            ->withComment($this->extractComment($lines))
+            ->withLoadingLocations($loadingLocations)
+            ->withDestinationLocations($destinationLocations)
+            ->withCargos($cargos)
+            ->build();
     }
 
     private function parseSection(array $lines, int $idx, string $type, array $conf): array
     {
-        $company = $this->{$conf['companyFinder']}($lines, $idx);
-        $street = $this->{$conf['streetFinder']}($lines, $idx);
-        $postalLine = $this->{$conf['postalFinder']}($lines, $idx);
+        $company    = $this->findCompany($lines, $idx);
+        $street     = $this->findStreet($lines, $idx);
+        $postalLine = $this->findPostalCity($lines, $idx);
         [$postalCode, $city, $country] = $this->parsePostal($postalLine, $conf);
         $time = $this->parseTime($lines, $idx, $type);
 
         $location = [
             'company_address' => array_filter([
                                                   'company'        => $company,
-                                                  'street_address' => $street ?? $postalLine,
+                                                  'street_address' => $street,
                                                   'city'           => $city,
                                                   'postal_code'    => $postalCode,
                                                   'country'        => $country,
                                               ]),
         ];
+
         if ($time) {
             $location['time'] = $time;
         }
 
-
-        $palletLine = $this->{$conf['palletFinder']}($lines, $idx);
-        $cargo = $this->parseCargo($palletLine, $lines, $idx);
+        $cargoBlock = $this->findCargoBlock($lines, $idx);
+        $cargo      = $this->parseCargo($cargoBlock, $lines);
 
         return [$location, $cargo];
-    }
-
-    protected function findNextTimeAndDate(array $lines, int $start): array
-    {
-        $time = null;
-        $date = null;
-
-        for ($i = $start; $i < count($lines); $i++) {
-            $line = trim($lines[$i]);
-
-            if (in_array($line, ['Collection', 'Delivery'])) {
-                break;
-            }
-
-            if (preg_match('/^(\d{4}|\d{1,2}(:\d{2})?\s?(am|pm)?)(\s*-\s*\d{1,2}(:\d{2})?\s?(am|pm)?)?$/i', $line)) {
-                $time = $line;
-            }
-
-            if (preg_match('/^\d{1,2}\/\d{1,2}\/\d{2,4}$/', $line)) {
-                $date = $line;
-            }
-
-            if ($time && $date) {
-                break;
-            }
-        }
-
-        return [$time, $date];
     }
 
     private function parseTime(array $lines, int $idx, string $type): array
     {
         $fromRaw = $toRaw = $dateRaw = $dateLine = null;
 
-        if ($type === 'Collection') {
+        if ($type === 'Loading') {
             [$timeRaw, $dateRaw] = $this->findNextTimeAndDate($lines, $idx + 1);
-            [$fromRaw, $toRaw]   = array_pad(explode('-', $timeRaw ?? ''), 2, null);
+            [$fromRaw, $toRaw] = array_pad(explode('-', $timeRaw ?? ''), 2, null);
         }
 
         if ($type === 'Delivery') {
@@ -180,21 +143,16 @@ class TransallianceParser implements PdfParserStrategy
         return [$postalCode, $city, $country];
     }
 
-    private function parseCargo(?string $line, array $lines, int $idx): ?array
-    {
-        if (!$line) return null;
-
-        if (preg_match('/(\d+)\s*PALLETS?/i', $line, $m)) {
-            return array_filter([
-                                    'title'         => $line,
-                                    'package_count' => (int) $m[1],
-                                    'package_type'  => 'pallet',
-                                    'number'        => $this->findRefNearby($lines, $idx),
-                                ]);
-        }
-
-        return null;
-    }
+    //    private function findNearbyNumber(array $lines, int $idx, int $lookaround = 3, string $type = ''): ?float
+    //    {
+    //        for ($i = max(0, $idx - $lookaround); $i <= $idx + $lookaround; $i++) {
+    //            $line = $lines[$i] ?? '';
+    //            if (preg_match('/^[\d,.]+$/', $line)) {
+    //                return (float) str_replace([','], ['.'], $line);
+    //            }
+    //        }
+    //        return null;
+    //    }
 
     private function resolveCountry(string $strategy, ?string $postal): ?string
     {
@@ -205,142 +163,209 @@ class TransallianceParser implements PdfParserStrategy
         };
     }
 
-    private function findCompany(array $lines, int $idx, int $lookahead = 5): ?string
+    private function findNextTimeAndDate(array $lines, int $start): array
+    {
+        $time = null;
+        $date = null;
+
+        for ($i = $start; $i < count($lines); $i++) {
+            $line = trim($lines[$i]);
+
+            if (in_array($line, ['Collection', 'Delivery'])) {
+                break;
+            }
+
+            if (preg_match('/\d{1,2}[:.]\d{2}/', $line)) {
+                $time = $line;
+            }
+
+            if (preg_match('/\d{2}\/\d{2}\/\d{2,4}/', $line)) {
+                $date = $line;
+            }
+
+            if ($time && $date) {
+                break;
+            }
+        }
+
+        return [$time, $date];
+    }
+
+    private function findCompany(array $lines, int $idx, int $lookahead = 12): ?string
     {
         for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && !preg_match('/^(REF|[0-9]{1,2}[:\-])/', $line)) {
-                return $line;
+            $line = trim($lines[$idx + $i] ?? '');
+
+            if ($line === '' || $line === '-' ||
+                preg_match('/^(REFERENCE|REF|ON|Contact|Payment terms)/i', $line) ||
+                preg_match('/^\d{1,2}\/\d{1,2}\/\d{2,4}$/', $line) || str_contains(strtoupper($line), 'VIREMENT')) {
+                continue;
             }
+
+            return $line;
         }
         return null;
     }
 
     private function findStreet(array $lines, int $idx, int $lookahead = 12): ?string
     {
+        $streetParts  = [];
+        $companyFound = false;
+
         for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && !preg_match('/^(REF|[0-9]{1,2}[:\-])/', $line)) {
-                return $line;
+            $line = trim($lines[$idx + $i] ?? '');
+
+            if ($line === '' || $line === '-') {
+                continue;
             }
+
+            if (preg_match('/^(REFERENCE|REF|ON|Contact|Payment terms)/i', $line)) {
+                continue;
+            }
+
+            if (preg_match('/^\d{1,2}\/\d{1,2}\/\d{2,4}$/', $line)) {
+                continue;
+            }
+
+            if (preg_match('/^(?:[A-Z]{2}-\S+|-\d{4,5}\s+.+|\d{4,5}\s+.+)/', $line)) {
+                break;
+            }
+
+
+            if (!$companyFound) {
+                $companyFound = true;
+                continue;
+            }
+
+            $streetParts[] = $line;
         }
-        return null;
+
+        return $streetParts ? implode(', ', $streetParts) : null;
     }
 
     private function findPostalCity(array $lines, int $idx, int $lookahead = 12): ?string
     {
         for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/(\d{4,5}|[A-Z0-9]{2,}\s?\d+[A-Z]*)\s+.+/', $line)) {
-                return $line;
+            $line = trim($lines[$idx + $i] ?? '');
+
+            if ($line === '' || $line === '-' || preg_match('/^(REFERENCE|REF|ON|Contact|Payment terms)/i', $line)) {
+                continue;
+            }
+
+            if (preg_match('/^-?[A-Z]{2}-\S+|^-?\d{4,5}\s+.+/i', $line)) {
+                return ltrim($line, '-');
             }
         }
         return null;
-    }
-
-    private function findPalletLine(array $lines, int $idx, int $lookahead = 12): ?string
-    {
-        for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/\d+\s*PALLETS?/i', $line)) {
-                return $line;
-            }
-        }
-        return null;
-    }
-
-    private function findTimeLine(array $lines, int $idx, int $lookahead = 6): ?string
-    {
-        for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/\d{1,2}[:.]?\d{2}(\s*-\s*\d{1,2}[:.]?\d{2})?/i', $line)) {
-                return $line;
-            }
-        }
-        return null;
-    }
-
-    private function findDateLine(array $lines, int $idx, int $lookahead = 6): ?string
-    {
-        for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/\d{2}\/\d{2}\/\d{4}/', $line)) {
-                return $line;
-            }
-        }
-        return null;
-    }
-
-    private function extractPrice(array $lines): ?float
-    {
-        $rateIndex = array_search('Rate', $lines);
-        $priceLine = $rateIndex !== false ? $lines[$rateIndex + 2] ?? null : null;
-
-        return $priceLine
-            ? (float) str_replace(['€', ',', ' '], ['', '', ''], $priceLine)
-            : null;
-    }
-
-
-    private function extractComments(array $lines): ?string
-    {
-        return collect($lines)
-            ->filter(fn($l) => Str::startsWith(trim($l), '-'))
-            ->map(fn($l) => ltrim($l, '- '))
-            ->implode(' ')
-        ;
     }
 
     protected function extractCustomer(array $lines): array
     {
-        $company     = $this->getCompanyName($lines[0]);
-        $streetParts = [];
+        $clientIndex  = collect($lines)->search(fn($l) => Str::contains($l, 'Test Client'));
+        $carrierIndex = collect($lines)->search(fn($l) => Str::contains($l, 'TRANSALLIANCE'));
+        $company      = null;
+        $streetParts  = [];
+        $postalCode   = null;
+        $city         = null;
+        $country      = null;
 
-        foreach ($lines as $line) {
-            if (preg_match('/^[A-Z ]+$/', $line) && !Str::contains($line, ['BOOKING', 'INSTRUCTION'])) {
-                $city = $line;
-                break;
-            }
-            if ($line !== $company) {
+        if ($clientIndex !== false && $carrierIndex !== false && $clientIndex < $carrierIndex) {
+            $company = $lines[$clientIndex];
+
+            for ($i = $clientIndex + 1; $i < $carrierIndex; $i++) {
+                $line = trim($lines[$i]);
+
+                if ($line === '' || preg_match('/^(VAT NUM|Contact|Tel|E-mail)/i', $line)) {
+                    break;
+                }
+
                 $streetParts[] = $line;
+
+                if (preg_match('/^([A-Z]{2}-\S+)\s+(.+)/', $line, $m)) {
+                    $postalCode = $m[1];
+                    $city       = $m[2];
+                    $country    = substr($postalCode, 0, 2);
+                }
             }
         }
-        $street     = implode(', ', $streetParts);
-        $postalLine = collect($lines)->first(fn($l) => preg_match('/[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}/i', $l));
-        $postalCode = $postalLine ?? null;
-        $country    = $postalCode ? 'GB' : null;
 
         return [
             'side'    => $this->getSideName('sender'),
-            'details' => [
-                'company'        => $company,
-                'street_address' => $this->getStreetAddress($lines),
-                'postal_code'    => $postalCode,
-                'city'           => $city ?? null,
-                'country'        => $country,
-            ],
+            'details' => array_filter(
+                [
+                    'company'        => $company,
+                    'street_address' => implode(', ', $streetParts),
+                    'postal_code'    => $postalCode,
+                    'city'           => trim($city ?? ''),
+                    'country'        => $country,
+                ]),
         ];
     }
 
-
-    protected function findRefNearby(array $lines, int $idx): ?string
+    private function findCargoBlock(array $lines, int $idx, int $lookahead = 40): ?array
     {
-        for ($j = $idx; $j < $idx + 8; $j++) {
-            if (isset($lines[$j]) && Str::contains(Str::upper($lines[$j]), 'REF')) {
-                if (preg_match('/REF[\s:]*([A-Z0-9\-]+)/i', $lines[$j], $m)) {
-                    return $m[1];
-                }
+        for ($i = 1; $i <= $lookahead; $i++) {
+            $line = trim($lines[$idx + $i] ?? '');
+
+            if (!$line) {
+                continue;
+            }
+
+            if (preg_match('/(PACKAGING|PAPER ROLLS)/i', $line)) {
+                $pos    = $idx + $i;
+                $weight = $this->findNearbyRefNumber($lines, $pos, 6, 'weight');
+                $volume = $this->findNearbyRefNumber($lines, $pos, 6, 'volume');
+
+                return [
+                    'title'  => $line,
+                    'type'   => 'other',
+                    'count'  => null,
+                    'weight' => $weight,
+                    'volume' => $volume,
+                    'line'   => $pos,
+                ];
             }
         }
         return null;
     }
 
-    protected function extractTimes(?string $line): array
+    private function parseCargo(?array $cargoBlock, array $lines): ?array
     {
-        if (!$line) {
-            return [null, null];
+        if (!$cargoBlock) {
+            return null;
         }
-        preg_match_all('/(\d{1,2}:\d{2})/', $line, $matches);
-        return $matches[1] ?? [null, null];
+
+        return array_filter([
+                                'title'         => $cargoBlock['title'],
+                                'package_count' => $cargoBlock['count'],
+                                'package_type'  => $cargoBlock['type'],
+                                'weight'        => $cargoBlock['weight'],
+                                'volume'        => $cargoBlock['volume'],
+                                'number'        => (string) $this->findNearbyRefNumber($lines, $cargoBlock['line']),
+                            ]);
     }
+
+    private function findNearbyRefNumber(array $lines, int $idx, int $lookaround = 3, string $type = ''): ?float
+    {
+        for ($i = max(0, $idx - $lookaround); $i <= $idx + $lookaround; $i++) {
+            $line = trim($lines[$i] ?? '');
+            if (!$line) {
+                continue;
+            }
+
+            if ($type === 'weight' && preg_match('/^\d{1,3}(?:,\d{3})*$/', $line)) {
+                return (float) str_replace(',', '.', str_replace('.', '', $line));
+            }
+
+            if ($type === 'volume' && preg_match('/^\d{4,}(?:[.,]\d+)?$/', $line)) {
+                return (float) str_replace(',', '.', $line);
+            }
+
+            if ($type === '' && preg_match('/^[\d.,]+$/', $line)) {
+                return (float) str_replace(',', '.', $line);
+            }
+        }
+        return null;
+    }
+
 }

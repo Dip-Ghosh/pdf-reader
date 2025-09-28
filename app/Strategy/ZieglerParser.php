@@ -27,7 +27,7 @@ class ZieglerParser implements PdfParserStrategy
                 'postalRegex'     => '/([A-Z0-9]{2,}\s?\d+[A-Z]*)\s+(.+)/',
                 'countryStrategy' => 'prefix',
             ],
-            'Delivery' => [
+            'Delivery'   => [
                 'time'            => 'delivery',
                 'companyFinder'   => 'findCompany',
                 'streetFinder'    => 'findStreet',
@@ -46,10 +46,7 @@ class ZieglerParser implements PdfParserStrategy
 
     public function parse(array $lines, ?string $file): array
     {
-        $lines = array_values(array_filter(array_map('trim', $lines)));
-
-        $price = $this->extractPrice($lines);
-
+        $lines                = array_values(array_filter(array_map('trim', $lines)));
         $loadingLocations     = [];
         $destinationLocations = [];
         $cargos               = [];
@@ -64,34 +61,28 @@ class ZieglerParser implements PdfParserStrategy
                     $destinationLocations[] = $loc;
                 }
 
-                if ($cargo) $cargos[] = $cargo;
+                if ($cargo) {
+                    $cargos[] = $cargo;
+                }
             }
         }
 
-        $builder = (new TransportOrderBuilder(new TransportOrderData()))
+        return (new TransportOrderBuilder(new TransportOrderData()))
             ->withAttachments($this->getFileName($file))
             ->withCustomer($this->extractCustomer($lines))
             ->withOrderReference($this->extractOrderReference($lines))
-            ->withFreight($price, 'EUR')
-            ->withComment($this->extractComment($lines));
-
-        if (!empty($loadingLocations)) {
-            $builder->withLoadingLocations($loadingLocations);
-        }
-        if (!empty($destinationLocations)) {
-            $builder->withDestinationLocations($destinationLocations);
-        }
-        if (!empty($cargos)) {
-            $builder->withCargos($cargos);
-        }
-
-        return $builder->build();
+            ->withFreight(uncomma($this->extractPrice($lines)), 'EUR')
+            ->withComment($this->extractComment($lines))
+            ->withLoadingLocations($loadingLocations)
+            ->withDestinationLocations($destinationLocations)
+            ->withCargos($cargos)
+            ->build();
     }
 
     private function parseSection(array $lines, int $idx, string $type, array $conf): array
     {
-        $company = $this->{$conf['companyFinder']}($lines, $idx);
-        $street = $this->{$conf['streetFinder']}($lines, $idx);
+        $company    = $this->{$conf['companyFinder']}($lines, $idx);
+        $street     = $this->{$conf['streetFinder']}($lines, $idx);
         $postalLine = $this->{$conf['postalFinder']}($lines, $idx);
         [$postalCode, $city, $country] = $this->parsePostal($postalLine, $conf);
         $time = $this->parseTime($lines, $idx, $type);
@@ -111,7 +102,7 @@ class ZieglerParser implements PdfParserStrategy
 
 
         $palletLine = $this->{$conf['palletFinder']}($lines, $idx);
-        $cargo = $this->parseCargo($palletLine, $lines, $idx);
+        $cargo      = $this->parseCargo($palletLine, $lines, $idx);
 
         return [$location, $cargo];
     }
@@ -150,7 +141,7 @@ class ZieglerParser implements PdfParserStrategy
 
         if ($type === 'Collection') {
             [$timeRaw, $dateRaw] = $this->findNextTimeAndDate($lines, $idx + 1);
-            [$fromRaw, $toRaw]   = array_pad(explode('-', $timeRaw ?? ''), 2, null);
+            [$fromRaw, $toRaw] = array_pad(explode('-', $timeRaw ?? ''), 2, null);
         }
 
         if ($type === 'Delivery') {
@@ -183,15 +174,17 @@ class ZieglerParser implements PdfParserStrategy
 
     private function parseCargo(?string $line, array $lines, int $idx): ?array
     {
-        if (!$line) return null;
+        if (!$line) {
+            return null;
+        }
 
         if (preg_match('/(\d+)\s*PALLETS?/i', $line, $m)) {
             return array_filter([
-                'title'         => $line,
-                'package_count' => (int) $m[1],
-                'package_type'  => 'pallet',
-                'number'        => $this->findRefNearby($lines, $idx),
-            ]);
+                                    'title'         => $line,
+                                    'package_count' => (int) $m[1],
+                                    'package_type'  => 'pallet',
+                                    'number'        => $this->findRefNearby($lines, $idx),
+                                ]);
         }
 
         return null;
@@ -250,48 +243,6 @@ class ZieglerParser implements PdfParserStrategy
         return null;
     }
 
-    private function findTimeLine(array $lines, int $idx, int $lookahead = 6): ?string
-    {
-        for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/\d{1,2}[:.]?\d{2}(\s*-\s*\d{1,2}[:.]?\d{2})?/i', $line)) {
-                return $line;
-            }
-        }
-        return null;
-    }
-
-    private function findDateLine(array $lines, int $idx, int $lookahead = 6): ?string
-    {
-        for ($i = 1; $i <= $lookahead; $i++) {
-            $line = $lines[$idx + $i] ?? null;
-            if ($line && preg_match('/\d{2}\/\d{2}\/\d{4}/', $line)) {
-                return $line;
-            }
-        }
-        return null;
-    }
-
-    private function extractPrice(array $lines): ?float
-    {
-        $rateIndex = array_search('Rate', $lines);
-        $priceLine = $rateIndex !== false ? $lines[$rateIndex + 2] ?? null : null;
-
-        return $priceLine
-            ? (float) str_replace(['€', ',', ' '], ['', '', ''], $priceLine)
-            : null;
-    }
-
-
-    private function extractComments(array $lines): ?string
-    {
-        return collect($lines)
-            ->filter(fn($l) => Str::startsWith(trim($l), '-'))
-            ->map(fn($l) => ltrim($l, '- '))
-            ->implode(' ')
-        ;
-    }
-
     protected function extractCustomer(array $lines): array
     {
         $company     = $this->getCompanyName($lines[0]);
@@ -322,27 +273,4 @@ class ZieglerParser implements PdfParserStrategy
             ],
         ];
     }
-
-
-    protected function findRefNearby(array $lines, int $idx): ?string
-    {
-        for ($j = $idx; $j < $idx + 8; $j++) {
-            if (isset($lines[$j]) && Str::contains(Str::upper($lines[$j]), 'REF')) {
-                if (preg_match('/REF[\s:]*([A-Z0-9\-]+)/i', $lines[$j], $m)) {
-                    return $m[1];
-                }
-            }
-        }
-        return null;
-    }
-
-    protected function extractTimes(?string $line): array
-    {
-        if (!$line) {
-            return [null, null];
-        }
-        preg_match_all('/(\d{1,2}:\d{2})/', $line, $matches);
-        return $matches[1] ?? [null, null];
-    }
-
 }
