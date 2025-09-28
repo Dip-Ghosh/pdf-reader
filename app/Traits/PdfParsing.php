@@ -49,7 +49,6 @@ trait PdfParsing
     {
         $time = strtolower(trim($time));
         $time = preg_replace('/(\d)(am|pm)/i', '$1 $2', $time);
-
         $formats = [
             '/^\d{4}$/'              => 'd/m/Y Hi',   // 0900
             '/^\d{1,2}\s?(am|pm)$/i' => 'd/m/Y g a', // 2 pm

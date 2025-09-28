@@ -24,10 +24,11 @@ class GenericTransportPdfAssistant extends PdfClient
 
     public function processLines(array $lines, ?string $attachment_filename = null)
     {
-
         foreach ($this->parsers as $parser) {
+
             if ($parser->canHandle($lines)) {
                 $data = $parser->parse($lines, $attachment_filename);
+
                 return $this->createOrder($data);
             }
         }

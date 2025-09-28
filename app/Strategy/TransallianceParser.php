@@ -143,17 +143,6 @@ class TransallianceParser implements PdfParserStrategy
         return [$postalCode, $city, $country];
     }
 
-    //    private function findNearbyNumber(array $lines, int $idx, int $lookaround = 3, string $type = ''): ?float
-    //    {
-    //        for ($i = max(0, $idx - $lookaround); $i <= $idx + $lookaround; $i++) {
-    //            $line = $lines[$i] ?? '';
-    //            if (preg_match('/^[\d,.]+$/', $line)) {
-    //                return (float) str_replace([','], ['.'], $line);
-    //            }
-    //        }
-    //        return null;
-    //    }
-
     private function resolveCountry(string $strategy, ?string $postal): ?string
     {
         return match ($strategy) {
@@ -367,5 +356,4 @@ class TransallianceParser implements PdfParserStrategy
         }
         return null;
     }
-
 }
