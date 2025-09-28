@@ -45,11 +45,10 @@ trait PdfParsing
         return null;
     }
 
-    public function normalizeSingleTime(string $date, string $time): ?string
+    protected function normalizeSingleTime(string $date, string $time): ?string
     {
         $time = strtolower(trim($time));
         $time = preg_replace('/(\d)(am|pm)/i', '$1 $2', $time);
-
         $formats = [
             '/^\d{4}$/'              => 'd/m/Y Hi',   // 0900
             '/^\d{1,2}\s?(am|pm)$/i' => 'd/m/Y g a', // 2 pm
@@ -166,4 +165,20 @@ trait PdfParsing
         }
         return null;
     }
+
+//    protected function fetchLocation($company, $street, $postalCode, $city, $country, $postalIne)
+//    {
+//        $location = [
+//            'company_address' => array_filter([
+//                                                  'company'        => $company,
+//                                                  'street_address' => $street ?? $postalLine,
+//                                                  'city'           => $city,
+//                                                  'postal_code'    => $postalCode,
+//                                                  'country'        => $country,
+//                                              ]),
+//        ];
+//        if ($time) {
+//            $location['time'] = $time;
+//        }
+//    }
 }

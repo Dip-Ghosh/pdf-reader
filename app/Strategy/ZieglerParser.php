@@ -100,7 +100,6 @@ class ZieglerParser implements PdfParserStrategy
             $location['time'] = $time;
         }
 
-
         $palletLine = $this->{$conf['palletFinder']}($lines, $idx);
         $cargo      = $this->parseCargo($palletLine, $lines, $idx);
 
